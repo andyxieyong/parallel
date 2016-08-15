@@ -105,6 +105,30 @@ void minValue(float* min_logLum, const float* const d_logLuminance, int length)
     }
 }
 
+__global__
+void maxValue(float* max_logLum, const float* const d_logLuminance, int length)
+{
+    extern __shared__ float s_data[];
+    int myId = threadIdx.x + blockDim.x * blockIdx.x;
+    int tid = threadIdx.x;
+    int bid = blockIdx.x;
+
+    s_data[tid] = myId < length ? d_logLuminance[myId] : 999.0f;
+
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_data[tid] = max(s_data[tid], s_data[tid + s]);
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        max_logLum[bid] = s_data[0];
+    }
+}
+
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -115,20 +139,24 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
 {
     size_t numPixels = numRows * numCols;
     const int threads = 1024;
-    const int blocks = ceil(static_cast<float>(numPixels) / 
-                            static_cast<float>(threads));
+    const int blocks = ceil(static_cast<float>(numPixels) / static_cast<float>(threads));
 
     std::cout << "min: " << min_logLum << "   max: " << max_logLum << "\n";
 
-    float* d_cache;
-    checkCudaErrors(cudaMalloc((void**) &d_cache, blocks * sizeof(float)));
-
     int floatSize = sizeof(float);
-    minValue<<<blocks, threads, threads *  floatSize>>>(d_cache, d_logLuminance, numPixels);
+    float* d_cache;
+    checkCudaErrors(cudaMalloc((void**) &d_cache, blocks * floatSize));
+
+    minValue<<<blocks, threads, threads * floatSize>>>(d_cache, d_logLuminance, numPixels);
     minValue<<<1, blocks, blocks * floatSize>>>(d_cache, d_cache, blocks);
     checkCudaErrors(cudaMemcpy(&min_logLum, d_cache, floatSize, cudaMemcpyDeviceToHost));
 
+    maxValue<<<blocks, threads, threads * floatSize>>>(d_cache, d_logLuminance, numPixels);
+    maxValue<<<1, blocks, blocks * floatSize>>>(d_cache, d_cache, blocks);
+    checkCudaErrors(cudaMemcpy(&max_logLum, d_cache, floatSize, cudaMemcpyDeviceToHost));
+
     std::cout << "min: " << min_logLum << "   max: " << max_logLum << "\n";
+
     //TODO
     /*Here are the steps you need to implement
       1) find the minimum and maximum value in the input logLuminance channel
