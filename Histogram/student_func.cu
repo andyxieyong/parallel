@@ -129,6 +129,25 @@ void maxValue(float* max_logLum, const float* const d_logLuminance, int length)
     }
 }
 
+__global__
+void histogram(const float* const d_logLuminance, unsigned int* const d_out, int numBins, 
+               size_t numPixels, float lumMin, float lumRange)
+{
+    int myId = threadIdx.x + blockDim.x * blockIdx.x;
+    if (myId >= numPixels) {
+        return;
+    }
+    if (myId < numBins) {
+        d_out[myId] = 0;
+    }
+
+    __syncthreads();
+
+    int bin = (d_logLuminance[myId] - lumMin) / lumRange * numBins;
+    bin = min(bin, numBins - 1);
+    atomicAdd(&d_out[bin], 1);
+}
+
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -140,8 +159,6 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
     size_t numPixels = numRows * numCols;
     const int threads = 1024;
     const int blocks = ceil(static_cast<float>(numPixels) / static_cast<float>(threads));
-
-    std::cout << "min: " << min_logLum << "   max: " << max_logLum << "\n";
 
     int floatSize = sizeof(float);
     float* d_cache;
@@ -156,6 +173,19 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
     checkCudaErrors(cudaMemcpy(&max_logLum, d_cache, floatSize, cudaMemcpyDeviceToHost));
 
     std::cout << "min: " << min_logLum << "   max: " << max_logLum << "\n";
+
+    histogram<<<blocks, threads>>>(d_logLuminance, d_cdf, numBins, numPixels, min_logLum, max_logLum-min_logLum);
+
+    // Temporal printing
+    int* h_myMemory = (int*)malloc(floatSize * numBins);
+    if (h_myMemory != 0) {
+        checkCudaErrors(cudaMemcpy(h_myMemory, d_cdf, floatSize * numBins, cudaMemcpyDeviceToHost));
+        for (size_t i = 0; i < numBins; ++i) {
+            std::cout << h_myMemory[i] << " ";
+        }
+        std::cout << "\n";
+        free(h_myMemory);
+    }
 
     //TODO
     /*Here are the steps you need to implement
