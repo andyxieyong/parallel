@@ -148,6 +148,29 @@ void histogram(const float* const d_logLuminance, unsigned int* const d_out, int
     atomicAdd(&d_out[bin], 1);
 }
 
+__global__
+void exclusiveSumScan(unsigned int* const d_cdf, int numBins)
+{
+	int tid = threadIdx.x;
+	if (tid >= numBins) {
+        return;
+    }
+
+    // Inclusive Hillis-Steele scan
+    unsigned int value = 0;
+	for (int i = 1; i < numBins; i <<= 1) {
+        value = tid >= i ? d_cdf[tid-i] + d_cdf[tid] : d_cdf[tid];
+		__syncthreads();
+		d_cdf[tid] = value;
+		__syncthreads();
+	}
+
+    // Make exclusive
+    unsigned int exclusiveValue = tid == 0 ? 0 : d_cdf[tid-1];
+    __syncthreads();
+    d_cdf[tid] = exclusiveValue;
+}
+
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -162,7 +185,7 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
 
     int floatSize = sizeof(float);
     float* d_cache;
-    checkCudaErrors(cudaMalloc((void**) &d_cache, blocks * floatSize));
+    checkCudaErrors(cudaMalloc((void**) &d_cache, floatSize));
 
     minValue<<<blocks, threads, threads * floatSize>>>(d_cache, d_logLuminance, numPixels);
     minValue<<<1, blocks, blocks * floatSize>>>(d_cache, d_cache, blocks);
@@ -172,29 +195,9 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
     maxValue<<<1, blocks, blocks * floatSize>>>(d_cache, d_cache, blocks);
     checkCudaErrors(cudaMemcpy(&max_logLum, d_cache, floatSize, cudaMemcpyDeviceToHost));
 
-    std::cout << "min: " << min_logLum << "   max: " << max_logLum << "\n";
-
     histogram<<<blocks, threads>>>(d_logLuminance, d_cdf, numBins, numPixels, min_logLum, max_logLum-min_logLum);
 
-    // Temporal printing
-    int* h_myMemory = (int*)malloc(floatSize * numBins);
-    if (h_myMemory != 0) {
-        checkCudaErrors(cudaMemcpy(h_myMemory, d_cdf, floatSize * numBins, cudaMemcpyDeviceToHost));
-        for (size_t i = 0; i < numBins; ++i) {
-            std::cout << h_myMemory[i] << " ";
-        }
-        std::cout << "\n";
-        free(h_myMemory);
-    }
+    exclusiveSumScan<<<1, numBins>>>(d_cdf, numBins);
 
-    //TODO
-    /*Here are the steps you need to implement
-      1) find the minimum and maximum value in the input logLuminance channel
-      store in min_logLum and max_logLum
-      2) subtract them to find the range
-      3) generate a histogram of all the values in the logLuminance channel using
-      the formula: bin = (lum[i] - lumMin) / lumRange * numBins
-      4) Perform an exclusive scan (prefix sum) on the histogram to get
-      the cumulative distribution of luminance values (this should go in the
-      incoming d_cdf pointer which already has been allocated for you)       */
+    checkCudaErrors(cudaFree(d_cache));
 }
