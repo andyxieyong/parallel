@@ -42,13 +42,74 @@
 
  */
 
+__global__
+void predicate(unsigned int* const d_inputVals, int* d_predicate, int bit, size_t numElems)
+{
+    int id = threadIdx.x + blockDim.x * blockIdx.x;
+    if (id >= numElems) {
+        return;
+    }
+    
+    d_predicate[id] = d_inputVals[id] & bit == 0 ? 1 : 0;
+}
+
+__global__
+void scan(int* d_predicate, int* d_scan, int numElems)
+{
+    int id = threadIdx.x + blockDim.x * blockIdx.x;
+    if (id >= numElems) {
+        return;
+    }
+
+    d_scan[id] = d_predicate[id];
+    __syncthreads();
+
+    // Inclusive Hillis-Steele scan
+    unsigned int value = 0;
+	for (int i = 1; i < numElems; i <<= 1) {
+        value = id >= i ? d_scan[id-i] + d_scan[id] : d_scan[id];
+		__syncthreads();
+		d_scan[id] = value;
+		__syncthreads();
+	}
+}
+
+__global__
+void move(unsigned int* const d_inputVals,
+          unsigned int* const d_inputPos,
+          const size_t numElems,
+          int* d_predicate, 
+          int* d_scan)
+{
+    int id = threadIdx.x + blockDim.x * blockIdx.x;
+    if (id >= numElems) {
+        return;
+    }
+    int startPos = d_scan[numElems-1];
+ 
+    // TODO
+}
 
 void your_sort(unsigned int* const d_inputVals,
                unsigned int* const d_inputPos,
                unsigned int* const d_outputVals,
                unsigned int* const d_outputPos,
                const size_t numElems)
-{ 
-  //TODO
-  //PUT YOUR SORT HERE
+{
+    const dim3 gridSize((numElems / 512) + 1);
+    const dim3 blockSize(512);
+
+    int* d_predicate;
+    int* d_scan;
+    checkCudaErrors(cudaMalloc((void**) &d_predicate, sizeof(int) * numElems));
+    checkCudaErrors(cudaMalloc((void**) &d_scan, sizeof(int) * numElems));
+
+    unsigned int limit = std::numeric_limits<unsigned int>::max();
+    for (unsigned int bit = 1; bit < limit; bit <<= 1) {
+        predicate<<<gridSize, blockSize>>>(d_inputVals, d_predicate, bit, numElems);
+        scan<<<gridSize, blockSize>>>(d_predicate, d_scan, numElems);
+    }
+    
+    checkCudaErrors(cudaFree(d_predicate));
+    checkCudaErrors(cudaFree(d_scan));
 }
