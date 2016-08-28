@@ -34,14 +34,14 @@
 
 */
 
+// Create scan sections (e.g. 0...1023) according to current bit value.
 __global__
-void scan(unsigned int* const d_inputVals, 
-          unsigned int* const d_scan, 
-          unsigned int bit, 
-          unsigned int block,
-          size_t numElems)
+void scanSections(unsigned int* const d_inputVals, 
+                  unsigned int* const d_scan, 
+                  unsigned int bit,
+                  size_t numElems)
 {
-    unsigned int offset = blockDim.x * block;
+    unsigned int offset = blockDim.x * blockIdx.x;
     int id = threadIdx.x + offset;
     if (id >= numElems) {
         return;
@@ -58,9 +58,38 @@ void scan(unsigned int* const d_inputVals,
 		d_scan[id] = value;
 		__syncthreads();
     }
-    if (offset > 0) {
-        d_scan[id] += d_scan[offset - 1];
+}
+
+// Take the highest value (=last value) of each scan section (0...1023,
+// 1024...2047) and create another scan array from them so the values
+// can be added to the original scan array.
+__global__
+void scanHighestValues(unsigned int* d_scan, unsigned int* d_scanHighest, unsigned int blockSize)
+{
+    int id = threadIdx.x;
+    d_scanHighest[id] = id == 0 ? 0 : d_scan[id * blockSize - 1];
+    __syncthreads();
+
+    unsigned int value = 0;
+	for (int i = 1; i < blockDim.x; i <<= 1) {
+        value = id >= i ? d_scanHighest[id-i] + d_scanHighest[id] : d_scanHighest[id];
+		__syncthreads();
+		d_scanHighest[id] = value;
+		__syncthreads();
+	}
+}
+
+// Add the result of scanHighestValues-function so scan sections
+// (i.e. all input values) are merged to one continous scan array.
+__global__
+void scanMerge(unsigned int* d_scan, unsigned int* d_scanHighest, unsigned int blockSize, size_t numElems)
+{
+    unsigned int id = threadIdx.x + blockDim.x * blockIdx.x;
+    if (id >= numElems) {
+        return;
     }
+    unsigned int highestId = id / blockSize;
+    d_scan[id] += d_scanHighest[highestId];
 }
 
 __global__
@@ -98,20 +127,27 @@ void your_sort(unsigned int* const d_inputVals,
     const dim3 blockSize(1024);
 
     unsigned int* d_scan;
+    unsigned int* d_scanHighest;
     checkCudaErrors(cudaMalloc(&d_scan, sizeof(unsigned int) * numElems));
+    checkCudaErrors(cudaMalloc(&d_scanHighest, sizeof(unsigned int) * gridSize.x));
 
     for (unsigned int i = 0; i < 8 * sizeof(unsigned int); ++i) {
         unsigned int bit = 1 << i;
-        for (unsigned int j = 0; j < gridSize.x; ++j) {
-            // Todo: these should be run in parallel and merged!
-            scan<<<1, blockSize>>>(d_inputVals, d_scan, bit, j, numElems);
-        }
+        // Since the maximum number of threads per block is 1024, an
+        // array of hundreds of thousands values can not be scanned at
+        // once. Thus scan is done in three parts:
+        // 1. Create scan array for each section according to block size (e.g. 0-1023, 1024-2047 etc.)
+        // 2. Create another scan array from the last values of each block (highest values)
+        // 3. Add the highest scan values to the original scan array to form one continous scan array
+        scanSections<<<gridSize, blockSize>>>(d_inputVals, d_scan, bit, numElems);
+        scanHighestValues<<<1, gridSize>>>(d_scan, d_scanHighest, blockSize.x);
+        scanMerge<<<gridSize, blockSize>>>(d_scan, d_scanHighest, blockSize.x, numElems);
+
         move<<<gridSize, blockSize>>>(d_inputVals, d_inputPos, d_outputVals, d_outputPos, d_scan, numElems, bit);
 
         checkCudaErrors(cudaMemcpy(d_inputVals, d_outputVals, numElems * sizeof(unsigned int), cudaMemcpyDeviceToDevice));
         checkCudaErrors(cudaMemcpy(d_inputPos, d_outputPos, numElems * sizeof(unsigned int), cudaMemcpyDeviceToDevice));
-        checkCudaErrors(cudaGetLastError());
     }
-    cudaFree(d_scan);
-    checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaFree(d_scan));
+    checkCudaErrors(cudaFree(d_scanHighest));
 }
