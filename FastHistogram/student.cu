@@ -15,7 +15,7 @@
 
    so the serial histogram calculation looks like:
    for (i = 0; i < numElems; ++i)
-     histo[val[i]]++;
+   histo[val[i]]++;
 
    That's it!  Your job is to make it run as fast as possible!
 
@@ -27,17 +27,18 @@
 
 #include "utils.h"
 
+// Naive solution for reference
 __global__
-void yourHisto(const unsigned int* const vals, //INPUT
-               unsigned int* const histo,      //OUPUT
-               int numVals)
+void naive(const unsigned int* const vals, //INPUT
+           unsigned int* const histo,      //OUPUT
+           int numVals)
 {
-  //TODO fill in this kernel to calculate the histogram
-  //as quickly as possible
-
-  //Although we provide only one kernel skeleton,
-  //feel free to use more if it will help you
-  //write faster code
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id >= numVals) {
+        return;
+    }
+    int bin = vals[id];
+    atomicAdd(&histo[bin], 1);
 }
 
 void computeHistogram(const unsigned int* const d_vals, //INPUT
@@ -45,10 +46,10 @@ void computeHistogram(const unsigned int* const d_vals, //INPUT
                       const unsigned int numBins,
                       const unsigned int numElems)
 {
-  //TODO Launch the yourHisto kernel
-
-  //if you want to use/launch more than one kernel,
-  //feel free
-
-  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+    const dim3 blockSize = 1024;
+    const dim3 gridSize = (numElems / blockSize.x) + 1;
+    
+    naive<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
+    cudaDeviceSynchronize();
+    checkCudaErrors(cudaGetLastError());
 }
