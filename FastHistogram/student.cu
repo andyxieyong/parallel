@@ -31,7 +31,7 @@
 __global__
 void naive(const unsigned int* const vals, //INPUT
            unsigned int* const histo,      //OUPUT
-           int numVals)
+           unsigned int numVals)
 {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
     if (id >= numVals) {
@@ -41,15 +41,36 @@ void naive(const unsigned int* const vals, //INPUT
     atomicAdd(&histo[bin], 1);
 }
 
+__global__
+void privatized(const unsigned int* const vals,
+                unsigned int* const histo,
+                unsigned int numVals)
+{
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id >= numVals) {
+        return;
+    }
+    __shared__ unsigned int sub[1024];
+    sub[threadIdx.x] = 0;
+    __syncthreads();
+    unsigned int bin = vals[id];
+    atomicAdd(&sub[bin], 1);
+    __syncthreads();
+    atomicAdd(&histo[threadIdx.x], sub[threadIdx.x]);
+}
+
 void computeHistogram(const unsigned int* const d_vals, //INPUT
                       unsigned int* const d_histo,      //OUTPUT
                       const unsigned int numBins,
                       const unsigned int numElems)
 {
+    // numBins == 1024
+    // numElems == 10240000
     const dim3 blockSize = 1024;
     const dim3 gridSize = (numElems / blockSize.x) + 1;
     
-    naive<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
+//    naive<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
+    privatized<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
     cudaDeviceSynchronize();
     checkCudaErrors(cudaGetLastError());
 }
