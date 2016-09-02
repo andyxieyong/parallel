@@ -24,7 +24,6 @@
 
 */
 
-
 #include "utils.h"
 
 // Naive solution for reference
@@ -43,13 +42,13 @@ void naive(const unsigned int* const vals, //INPUT
 
 __global__
 void privatized(const unsigned int* const vals,
-                unsigned int* const histo,
-                unsigned int numVals)
+                unsigned int* const histo)
 {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
-    if (id >= numVals) {
-        return;
-    }
+    // Input sizes are known so this can be skipped
+    // if (id >= numVals) {
+    //     return;
+    // }
     __shared__ unsigned int sub[1024];
     sub[threadIdx.x] = 0;
     __syncthreads();
@@ -59,6 +58,56 @@ void privatized(const unsigned int* const vals,
     atomicAdd(&histo[threadIdx.x], sub[threadIdx.x]);
 }
 
+__global__
+void splitPrivatized(const unsigned int* const vals,
+                     unsigned int* const histo,
+                     unsigned int numBins)
+{
+    unsigned int tid = threadIdx.x;
+    unsigned int id = threadIdx.x + blockIdx.x * blockDim.x;
+    __shared__ unsigned int sub[1024];
+
+    while (tid < numBins) {
+        sub[tid] = 0;
+        tid += blockDim.x;
+    }    
+    __syncthreads();
+
+    unsigned int bin = vals[id];
+    atomicAdd(&sub[bin], 1);
+    __syncthreads();
+
+    tid = threadIdx.x;
+    while (tid < numBins) {
+        atomicAdd(&histo[tid], sub[tid]);
+        tid += blockDim.x;
+    }
+}
+
+__global__
+void splitPrivatizedUnroll(const unsigned int* const vals,
+                           unsigned int* const histo,
+                           unsigned int numBins)
+{
+    unsigned int tid = threadIdx.x;
+    unsigned int id = threadIdx.x + blockIdx.x * blockDim.x;
+    __shared__ unsigned int sub[1024];
+
+    sub[tid] = 0;
+    tid += blockDim.x;
+    sub[tid] = 0;
+    __syncthreads();
+
+    unsigned int bin = vals[id];
+    atomicAdd(&sub[bin], 1);
+    __syncthreads();
+
+    tid = threadIdx.x;
+    atomicAdd(&histo[tid], sub[tid]);
+    tid += blockDim.x;
+    atomicAdd(&histo[tid], sub[tid]);
+}
+
 void computeHistogram(const unsigned int* const d_vals, //INPUT
                       unsigned int* const d_histo,      //OUTPUT
                       const unsigned int numBins,
@@ -66,11 +115,17 @@ void computeHistogram(const unsigned int* const d_vals, //INPUT
 {
     // numBins == 1024
     // numElems == 10240000
-    const dim3 blockSize = 1024;
-    const dim3 gridSize = (numElems / blockSize.x) + 1;
-    
-//    naive<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
-    privatized<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
+
+    // dim3 blockSize = 1024;
+    // dim3 gridSize = numElems / blockSize.x;    
+    // naive<<<gridSize, blockSize>>>(d_vals, d_histo, numElems);
+    // privatized<<<gridSize, blockSize>>>(d_vals, d_histo);
+
+    dim3 blockSize = 512;
+    dim3 gridSize = numElems / blockSize.x;
+    // splitPrivatized<<<gridSize, blockSize>>>(d_vals, d_histo, numBins);
+    splitPrivatizedUnroll<<<gridSize, blockSize>>>(d_vals, d_histo, numBins);
+
     cudaDeviceSynchronize();
     checkCudaErrors(cudaGetLastError());
 }
