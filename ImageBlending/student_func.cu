@@ -66,12 +66,67 @@
 
 #include "utils.h"
 #include <thrust/host_vector.h>
+#include <fstream>
+
+__device__
+bool isExterior(const uchar4* img, int pos)
+{
+    return img[pos].x == 255 && img[pos].y == 255 && img[pos].z == 255;
+}
+
+__global__
+void calculateMask(const uchar4* img,
+                   const int numRows, 
+                   const int numCols,
+                   int* mask)
+{
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    if (col >= numCols || row >= numRows) {
+        return;
+    }
+
+    int pos = numCols * row + col;
+    bool exterior = isExterior(img, pos);
+    if (exterior) {
+        mask[pos] = 0;
+        return;
+    }
+
+    int rowUp = max(0, row-1);
+    int rowDown = min(numRows, row+1);
+    int colLeft = max(0, col-1);
+    int colRight = min(numCols, col+1);
+
+    if (isExterior(img, numCols * rowUp + col) ||
+        isExterior(img, numCols * rowDown + col) ||
+        isExterior(img, numCols * row + colLeft) ||
+        isExterior(img, numCols * row + colRight)) {
+        mask[pos] = 1;    
+    } else {
+        mask[pos] = 2;
+    }
+}
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
-                const size_t numRowsSource, const size_t numColsSource,
+                const size_t numRowsSource, 
+                const size_t numColsSource,
                 const uchar4* const h_destImg, //IN
                 uchar4* const h_blendedImg) //OUT
 {
+    size_t numElems = numRowsSource * numColsSource;
+    const int block = 16;
+    const dim3 blockSize(block, block, 1);
+    const dim3 gridSize((numColsSource + block - 1) / block, 
+                        (numRowsSource + block - 1) / block, 
+                        1);
+
+    int* d_mask;
+    uchar4* d_sourceImg;
+    checkCudaErrors(cudaMalloc(&d_mask, sizeof(int) * numElems));
+    checkCudaErrors(cudaMalloc(&d_sourceImg, sizeof(uchar4) * numElems));
+    checkCudaErrors(cudaMemcpy(d_sourceImg, h_sourceImg, sizeof(uchar4) * numElems, cudaMemcpyHostToDevice));
+    calculateMask<<<gridSize, blockSize>>>(d_sourceImg, numRowsSource, numColsSource, d_mask);
 
   /* To Recap here are the steps you need to implement
   
