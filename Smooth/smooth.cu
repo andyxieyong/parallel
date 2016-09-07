@@ -4,8 +4,6 @@
 #include "compare.h"
 #include "gputimer.h"
 
-#include <iostream>
-
 // Reference
 __global__ void smooth(float * v_new, const float * v) {
     int myIdx = threadIdx.x * gridDim.x + blockIdx.x;
@@ -98,4 +96,6 @@ int main(int argc, char **argv)
     cudaFree(d_in);
     cudaFree(d_out);
     cudaFree(d_out_shared);
+
+    return 0;
 }

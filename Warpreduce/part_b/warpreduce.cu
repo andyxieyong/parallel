@@ -22,9 +22,7 @@ __device__ unsigned int warp_reduce(unsigned int p, volatile unsigned int * s) {
     // Should not use 's'
     // Sums p across warp, returning the result.
     // You can do this without using the character '+' in your code at all
-    //
-    // TODO: Fill in the rest of this function
-    //
+    return __popc(__ballot(p));
 }
 
 __global__ void reduce(unsigned int * d_out_warp, 
@@ -79,7 +77,6 @@ int main(int argc, char **argv)
     cudaMemcpy(&h_out_warp, d_out_warp, sizeof(unsigned int), 
                cudaMemcpyDeviceToHost);
 
-    // compare your result against the expected reduce sum
     compare(h_out_warp, sum);
 
     // free GPU memory allocation
@@ -87,4 +84,3 @@ int main(int argc, char **argv)
     cudaFree(d_out_warp);
         
 }
-

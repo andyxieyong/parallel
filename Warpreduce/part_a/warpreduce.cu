@@ -22,9 +22,16 @@ __device__ unsigned int shared_reduce(unsigned int p, volatile unsigned int * s)
     // You may change any value in s
     // You should execute no more than 5 + operations (if you're doing
     // 31, you're doing it wrong)
-    //
-    // TODO: Fill in the rest of this function
 
+    int tid = threadIdx.x;
+    s[tid] = p;
+    __syncthreads();
+    for (int i = blockDim.x / 2; i > 0; i >>= 1) { // This could be unrolled
+        if (tid < i) {
+            s[tid] += s[tid+i];
+        }
+        __syncthreads();
+    }
     return s[0];
 }
 
@@ -79,10 +86,10 @@ int main(int argc, char **argv)
     cudaMemcpy(&h_out_shared, d_out_shared, sizeof(unsigned int), 
                cudaMemcpyDeviceToHost);
     
+    // compare your resulst against the sum
     compare(h_out_shared, sum);
 
     // free GPU memory allocation
     cudaFree(d_in);
     cudaFree(d_out_shared);
 }
-
