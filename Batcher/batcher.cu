@@ -4,7 +4,17 @@
 #include "compare.h"
 #include "gputimer.h"
 
+// Your job is to implemment a bitonic sort. A description of the bitonic sort
+// can be see at:
 // http://en.wikipedia.org/wiki/Bitonic_sort
+
+__device__ void swap(float& a, float& b)
+{
+    float temp = a;
+    a = b;
+    b = temp;
+}
+
 __global__ void batcherBitonicMergesort64(float * d_out, const float * d_in)
 {
     // you are guaranteed this is called with <<<1, 64, 64*4>>>
@@ -17,8 +27,25 @@ __global__ void batcherBitonicMergesort64(float * d_out, const float * d_in)
     {
         for (int substage = stage; substage >= 0; substage--)
         {
-            // TODO
+            int distance = 1 << substage; // Distance to value to be compared
+            int comparison = tid - distance; // Value to be compared
+            int div = 1 << (stage + 1);
+            // Skip values that should not be compared
+            if (comparison < 0 || (comparison / div) != (tid / div)) {
+                continue;
+            }
+            bool up = (comparison / div) % 2 == 1;
+            if (up) {
+                if (sdata[tid] > sdata[comparison]) {
+                    swap(sdata[tid], sdata[comparison]);
+                }
+            } else {
+                if (sdata[tid] < sdata[comparison]) {
+                    swap(sdata[tid], sdata[comparison]);
+                }                
+            }
         }
+        __syncthreads();
     }
 
     d_out[tid] = sdata[tid];
@@ -68,12 +95,11 @@ int main(int argc, char **argv)
     
     // copy back the sum from GPU
     cudaMemcpy(h_out, d_out, ARRAY_BYTES, cudaMemcpyDeviceToHost);
-
+    
+    // compare your result against the reference solution
     compare(h_out, h_sorted, ARRAY_SIZE);
   
     // free GPU memory allocation
     cudaFree(d_in);
     cudaFree(d_out);
-        
-    return 0;
 }
