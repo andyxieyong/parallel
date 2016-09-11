@@ -1,0 +1,1 @@
+Smoothing algorithm with and without shared memory

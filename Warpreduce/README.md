@@ -1,0 +1,1 @@
+Two different reduce implementations
